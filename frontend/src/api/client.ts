@@ -63,6 +63,26 @@ async function request<T>(endpoint: string, options: RequestOptions = {}): Promi
   return (await response.json()) as T;
 }
 
+//ФУНКЦИЯ ДЛЯ СКАЧИВАНИЯ С АВТОРИЗАЦИЕЙ
+async function downloadRequest(endpoint: string): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  const token = authToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_URL}${endpoint}`, {
+    headers,
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail ?? "Request failed");
+  }
+
+  return response.blob();
+}
+
 export const api = {
   register: (payload: { email: string; password: string; display_name: string }) =>
     request("/auth/register", { method: "POST", body: payload, skipAuth: true }),
@@ -105,6 +125,12 @@ export const api = {
       method: "POST",
       body: { project_id: projectId, content },
     }),
+
+  getFiles: (projectId: string) =>
+    request<FileAsset[]>(`/files?project_id=${projectId}`),
+    
+  downloadFile: (fileId: string) => downloadRequest(`/files/${fileId}`),
+
   uploadFile: (projectId: string, file: File) => {
     const formData = new FormData();
     formData.append("upload", file);

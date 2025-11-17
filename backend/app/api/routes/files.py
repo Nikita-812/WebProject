@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import uuid
 from pathlib import Path
+from typing import List  
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
@@ -34,7 +35,11 @@ async def upload_file(
     destination_dir.mkdir(parents=True, exist_ok=True)
     file_id = uuid.uuid4()
     original_name = upload.filename or "file"
-    destination_path = destination_dir / f"{file_id}_{original_name}"
+ 
+    safe_original_name = "".join(
+        c for c in original_name if c.isalnum() or c in ("_.- ")
+    ).strip()
+    destination_path = destination_dir / f"{file_id}_{safe_original_name}"
 
     with destination_path.open("wb") as buffer:
         while chunk := await upload.read(1024 * 1024):
@@ -42,7 +47,9 @@ async def upload_file(
             if size > MAX_UPLOAD_SIZE:
                 buffer.close()
                 destination_path.unlink(missing_ok=True)
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File too large")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="File too large"
+                )
             buffer.write(chunk)
     await upload.close()
 
@@ -60,6 +67,23 @@ async def upload_file(
     return file_record
 
 
+#НОВЫЙ ЭНДПОИНТ ДЛЯ СПИСКА ФАЙЛОВ
+@router.get("", response_model=List[FileRead])
+async def list_files(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+) -> List[FileAsset]:
+    """
+    Get a list of all files for a given project.
+    """
+    await ensure_project_member(project_id, current_user, db)
+
+    query = select(FileAsset).where(FileAsset.project_id == project_id)
+    result = await db.scalars(query)
+    return result.all()
+
+
 @router.get("/{file_id}")
 async def download_file(
     file_id: uuid.UUID,
@@ -75,4 +99,9 @@ async def download_file(
     if not os.path.exists(file_record.path):
         raise HTTPException(status_code=status.HTTP_410_GONE, detail="File missing on disk")
 
-    return FileResponse(path=file_record.path, media_type=file_record.mime, filename=Path(file_record.path).name)
+    # Используем Path() для безопасного извлечения имени файла
+    filename = Path(file_record.path).name
+
+    return FileResponse(
+        path=file_record.path, media_type=file_record.mime, filename=filename
+    )
